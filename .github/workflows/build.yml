@@ -1,10 +1,10 @@
-name: Build and Package
+name: Build Windows and macOS
 
 on:
-  push:
-    branches: [master, main]
-  pull_request:
-    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -15,70 +15,68 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: x64
-          - runner: macos-latest
+            asset: PeepoDrumKit.exe
+          - runner: macos-15-intel
             os: macosx
             arch: x86_64
+            asset: PeepoDrumKit-macOS-x64.dmg
           - runner: macos-latest
             os: macosx
             arch: arm64
-          - runner: ubuntu-latest
-            os: linux
-            arch: x86_64
+            asset: PeepoDrumKit-macOS-arm64.dmg
 
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
           lfs: true
 
-      - name: Install dependencies
-        if: ${{ matrix.os == 'linux' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsoundio-dev
-
-      - name: Setup LLVM
-        if: ${{ matrix.os != 'windows' }}
+      - if: matrix.os == 'macosx'
         uses: ZhongRuoyu/setup-llvm@v0
         with:
           llvm-version: 21
 
-      - name: Setup xmake
-        uses: xmake-io/github-action-setup-xmake@v1
+      - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: latest
 
-      - name: Configure xmake (Release, ${{ matrix.arch }})
-        run: |
-          xmake f -m release -a ${{ matrix.arch }} ${{ matrix.os == 'linux' && '--toolchain=clang' || '' }} -c -y
-
       - name: Build
-        run: |
-          xmake -v
+        run: xmake f -m release -a ${{ matrix.arch }} -c -y && xmake -v
 
-      - name: Bundle assets and libraries
-        if: ${{ matrix.os != 'macosx' }}
+      - name: Prepare Windows executable
+        if: matrix.os == 'windows'
+        shell: pwsh
         run: |
-          xmake install -o build/${{ matrix.os }}/${{ matrix.arch }}/release/
+          xmake install -o build/package
+          Copy-Item build/package/bin/PeepoDrumKit.exe ${{ matrix.asset }}
 
-      - name: Clear up extra build files for MacOSX
-        if: ${{ matrix.os == 'macosx' }}
+      - name: Prepare macOS disk image
+        if: matrix.os == 'macosx'
         run: |
-          rm build/${{ matrix.os }}/${{ matrix.arch }}/release/PeepoDrumKit
+          codesign --force --deep --sign - build/macosx/${{ matrix.arch }}/release/PeepoDrumKit.app
+          hdiutil create -volname PeepoDrumKit -srcfolder build/macosx/${{ matrix.arch }}/release/PeepoDrumKit.app -ov -format UDZO ${{ matrix.asset }}
 
-      - name: Observer build directories
-        run: |
-          pwd
-          ls -l build/${{ matrix.os }}/${{ matrix.arch }}/release/${{ matrix.os != 'macosx' && 'bin/' || '' }}
-
-      - name: Upload artifact (binary + assets)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: peepodrumkit-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            build/${{ matrix.os }}/${{ matrix.arch }}/release/${{ matrix.os != 'macosx' && 'bin/' || '' }}
-            ${{ matrix.os == 'macosx' && format('build/{0}/{1}/release/PeepoDrumKit.app', matrix.os, matrix.arch) || '' }}
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ matrix.asset }}
           if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish direct-download files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view action-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create action-build --repo "$GITHUB_REPOSITORY" --title "Action Build" --notes "Latest manually triggered Windows and macOS build."
+          gh release upload action-build dist/* --repo "$GITHUB_REPOSITORY" --clobber
