@@ -74,7 +74,14 @@ target("PeepoDrumKit")
     add_files("src/main.cpp")
     add_files("src/core/*.cpp")
     add_files("src/peepodrumkit/*.cpp")
-    add_files("src/audio/*.c", "src/audio/*.cpp")
+    add_files("src/audio/*.c", "src/audio/audio_common.cpp", "src/audio/audio_engine.cpp", "src/audio/audio_file_formats.cpp")
+    if is_os("windows") then
+        add_files("src/audio/audio_backend_wasapi.cpp")
+    elseif is_os("macosx") then
+        add_files("src/audio/audio_backend_coreaudio.cpp")
+    else
+        add_files("src/audio/audio_backend_libsoundio.cpp")
+    end
     add_files("src/imgui/*.cpp")
 
     if is_os("macosx") then
