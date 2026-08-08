@@ -19,9 +19,9 @@ namespace Audio
 		return std::make_unique<WASAPIBackend>();
 #elif defined(__APPLE__)
 		return std::make_unique<CoreAudioBackend>();
-#endif
-		// Use LibSoundIO as fallback/default
+#else
 		return std::make_unique<LibSoundIOBackend>();
+#endif
 	}
 
 	using VoiceFlags = u16;
